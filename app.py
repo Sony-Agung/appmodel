@@ -1,48 +1,34 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-from joblib import Parallel, delayed
 
-def northwest_corner_method(supply, demand, distances, cost_per_km):
+def north_west_corner(supply, demand):
     num_suppliers = len(supply)
     num_customers = len(demand)
     
     # Initialize variables
     allocations = np.zeros((num_suppliers, num_customers))
-    supply_remaining = np.array(supply)
-    demand_remaining = np.array(demand)
+    s = 0
+    d = 0
     
-    # Northwest Corner Method
-    i, j = 0, 0
-    while i < num_suppliers and j < num_customers:
-        # Find the minimum between supply and demand
-        allocation = min(supply_remaining[i], demand_remaining[j])
-        
-        # Allocate the minimum amount
-        allocations[i][j] = allocation
+    # Perform allocations
+    while s < num_suppliers and d < num_customers:
+        allocation = min(supply[s], demand[d])
+        allocations[s][d] = allocation
         
         # Update supply and demand
-        supply_remaining[i] -= allocation
-        demand_remaining[j] -= allocation
+        supply[s] -= allocation
+        demand[d] -= allocation
         
         # Move to the next supplier or customer
-        if supply_remaining[i] == 0:
-            i += 1
-        else:
-            j += 1
+        if supply[s] == 0:
+            s += 1
+        if demand[d] == 0:
+            d += 1
     
-    # Adjust the shape of distances to match allocations
-    adjusted_distances = np.zeros_like(allocations)
-    adjusted_distances[:distances.shape[0], :distances.shape[1]] = distances
-    
-    # Calculate total cost if cost_per_km is provided
-    total_cost = np.nan
-    if cost_per_km:
-        total_cost = np.sum(allocations * adjusted_distances) * cost_per_km
-        
-    return allocations, total_cost
+    return allocations
 
-def least_cost_parallel(supply, demand, distances, cost_per_km):
+def least_cost_greedy(supply, demand, distances):
     num_suppliers = len(supply)
     num_customers = len(demand)
     
@@ -51,118 +37,147 @@ def least_cost_parallel(supply, demand, distances, cost_per_km):
     supply_remaining = np.array(supply)
     demand_remaining = np.array(demand)
     
-    # Function to calculate least cost for a given row
-    def calculate_least_cost(i):
-        while np.any(supply_remaining[i]) and np.any(demand_remaining):
-            # Find index with minimum cost
-            min_cost_index = np.unravel_index(np.argmin(distances[i]), distances[i].shape)
-            j = min_cost_index[0]
-            
-            # Allocate minimum between supply and demand
-            allocation = min(supply_remaining[i], demand_remaining[j])
-            allocations[i][j] = allocation
-            
-            # Update supply, demand, and distances
-            supply_remaining[i] -= allocation
-            demand_remaining[j] -= allocation
-            distances[i][j] = np.inf
-    
-    # Parallelize the calculation across rows
-    Parallel(n_jobs=-1)(delayed(calculate_least_cost)(i) for i in range(num_suppliers))
-    
-    # Calculate total cost if cost_per_km is provided
-    total_cost = np.nan
-    if cost_per_km:
-        total_cost = np.sum(allocations * distances) * cost_per_km
+    # Iterate until all demand is fulfilled
+    while np.sum(demand_remaining) > 0:
+        # Find the minimum distance and its indices
+        min_distance = np.min(distances)
+        min_indices = np.argwhere(distances == min_distance)
         
-    return allocations, total_cost
-
-# Function to generate reference table for distances
-def generate_distance_table(num_gudang, num_toko, gudang_names, toko_names):
-    distances = np.zeros((num_gudang, num_toko))
-    for i in range(num_gudang):
-        for j in range(num_toko):
-            key = f'distance_{i}_{j}'  # Generate unique key
-            distance_input = st.number_input(f'Jarak dari {gudang_names[i]} ke {toko_names[j]} (km):', key=key, min_value=0, step=1)
-            distances[i][j] = distance_input
-    return distances
+        # Iterate through minimum distance indices
+        for idx in min_indices:
+            supplier_idx, customer_idx = idx[0], idx[1]
+            
+            # Calculate allocation amount
+            allocation = min(supply_remaining[supplier_idx], demand_remaining[customer_idx])
+            
+            # Update allocations
+            allocations[supplier_idx][customer_idx] += allocation
+            
+            # Update supply and demand
+            supply_remaining[supplier_idx] -= allocation
+            demand_remaining[customer_idx] -= allocation
+            
+            # Set distance to infinity to avoid re-allocation
+            distances[supplier_idx][customer_idx] = np.inf
+    
+    return allocations
 
 # Streamlit app
 st.title('Biaya Pengiriman dengan Metode Northwest Corner atau Least Cost')
 
 # Input data
-num_gudang = st.number_input('Masukkan jumlah gudang:', min_value=1, step=1, value=3)
-num_toko = st.number_input('Masukkan jumlah toko:', min_value=1, step=1, value=4)
+method = st.radio("Choose Optimization Method:", ("North West Corner", "Least Cost"))
 
-supply = []
-demand = []
+if method == "North West Corner":
+    st.header('North West Corner Method')
+    supply = []
+    demand = []
+    
+    num_suppliers = st.number_input('Enter the number of suppliers:', min_value=1, step=1, value=3)
+    num_customers = st.number_input('Enter the number of demand:', min_value=1, step=1, value=3)
+    
+    st.subheader('Masukan Informasi Supply:')
+    gudang_names = [st.text_input(f'Enter name for Supplier {i+1}:', f'Supplier {i+1}') for i in range(num_suppliers)]
+    
+    for i in range(num_suppliers):
+        supply_input = st.number_input(f'Enter supply for {gudang_names[i]}:', min_value=0, step=1)
+        supply.append(supply_input)
+        
+    st.subheader('Masukan Informasi Demand:')
+    toko_names = [st.text_input(f'Enter name for Customer {i+1}:', f'Customer {i+1}') for i in range(num_customers)]
+    
+    for j in range(num_customers):
+        demand_input = st.number_input(f'Enter demand for {toko_names[j]}:', min_value=0, step=1)
+        demand.append(demand_input)
+    
+    st.subheader('Masukan Jarak:')
+    distances = np.zeros((num_suppliers, num_customers))
+    for i in range(num_suppliers):
+        for j in range(num_customers):
+            distance_input = st.number_input(f'Distance from {gudang_names[i]} to {toko_names[j]}:', value=0)
+            distances[i][j] = distance_input
+    
+    try:
+        # Calculate allocations using NWC method
+        allocations = north_west_corner(supply, demand)
 
-st.write('### Masukkan Data:')
-st.write('Isi tabel di bawah ini dengan data yang sesuai.')
+        # Display allocations for NWC
+        st.subheader('Allocation Table (North West Corner):')
+        df_allocations = pd.DataFrame(allocations, columns=[f'{toko_names[i]}' for i in range(num_customers)])
+        st.write(df_allocations)
 
-# Create empty dataframe for input
-input_df = pd.DataFrame(np.zeros((num_gudang + 1, num_toko)), 
-                        index=[f'Gudang {i+1}' for i in range(num_gudang)] + ['Total Supply'],
-                        columns=[f'Toko {i+1}' for i in range(num_toko)])
-input_table = st.table(input_df)
+        # Calculate total multiplication from the distribution table
+        total_multiplication = np.sum(allocations * np.array(distances))
 
-# Input data supply
-for i in range(num_gudang):
-    supply_input = st.number_input(f'Masukkan persediaan di Gudang {i+1}:', min_value=0, step=1)
-    supply.append(supply_input)
-    input_df.iloc[i, :] = supply_input
+        # Display total multiplication
+        st.subheader('Total Multiplication from Distribution Table:')
+        st.write(f'Total Multiplication: {total_multiplication}')
 
-# Input data demand
-for j in range(num_toko):
-    demand_input = st.number_input(f'Masukkan daya tampung di Toko {j+1}:', min_value=0, step=1)
-    demand.append(demand_input)
-    input_df.iloc[num_gudang, j] = demand_input
+        # Ask for cost per kilometer
+        cost_per_km_input = st.number_input('Enter cost per kilometer (optional):', min_value=0)
 
-# Input data jarak
-st.write('### Tabel Jarak (km):')
-gudang_names = [st.text_input(f'Nama Gudang {i+1}:', f'Gudang {i+1}') for i in range(num_gudang)]
-toko_names = [st.text_input(f'Nama Toko {i+1}:', f'Toko {i+1}') for i in range(num_toko)]
-distances = generate_distance_table(num_gudang, num_toko, gudang_names, toko_names)
-distances_df = pd.DataFrame(distances, index=gudang_names, 
-                             columns=toko_names)
-st.write(distances_df)
+        # Calculate total cost if cost_per_km is provided
+        if cost_per_km_input:
+            total_cost = total_multiplication * cost_per_km_input
+            st.write('### Total Cost:')
+            st.write(f'Total Cost: {total_cost}')
 
-# Input biaya per kilometer (opsional)
-st.write('### Asumsi Biaya per Kilometer (Rp):')
-cost_per_km_input = st.number_input('Masukkan biaya per kilometer (Rp):', min_value=0)
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
 
-# Select method
-method = st.radio('Pilih Metode Pengalokasian:', ('Northwest Corner', 'Least Cost'))
+elif method == "Least Cost":
+    st.header('Least Cost Method')
+    supply = []
+    demand = []
+    
+    num_suppliers = st.number_input('Enter the number of suppliers:', min_value=1, step=1, value=3)
+    num_customers = st.number_input('Enter the number of customers:', min_value=1, step=1, value=3)
+    
+    st.subheader('Enter Supplier Information:')
+    gudang_names = [st.text_input(f'Enter name for Supplier {i+1}:', f'Supplier {i+1}') for i in range(num_suppliers)]
+    
+    for i in range(num_suppliers):
+        supply_input = st.number_input(f'Enter supply for {gudang_names[i]}:', min_value=0, step=1)
+        supply.append(supply_input)
+        
+    st.subheader('Enter Customer Information:')
+    toko_names = [st.text_input(f'Enter name for Customer {i+1}:', f'Customer {i+1}') for i in range(num_customers)]
+    
+    for j in range(num_customers):
+        demand_input = st.number_input(f'Enter demand for {toko_names[j]}:', min_value=0, step=1)
+        demand.append(demand_input)
+    
+    st.subheader('Enter Distances:')
+    distances = np.zeros((num_suppliers, num_customers))
+    for i in range(num_suppliers):
+        for j in range(num_customers):
+            distance_input = st.number_input(f'Distance from {gudang_names[i]} to {toko_names[j]}:', value=0)
+            distances[i][j] = distance_input
+    
+    try:
+        # Calculate allocations using Least Cost method
+        allocations = least_cost_greedy(supply, demand, np.array(distances))
 
-# Add dummy row for unbalanced supply
-total_supply = sum(supply)
-if total_supply < sum(demand):
-    supply.append(sum(demand) - total_supply)
-    input_df.loc['Dummy'] = 0
+        # Display allocations for Least Cost
+        st.subheader('Allocation Table (Least Cost):')
+        df_allocations = pd.DataFrame(allocations, columns=[f'{toko_names[i]}' for i in range(num_customers)])
+        st.write(df_allocations)
 
-# Calculate allocations
-if method == 'Northwest Corner':
-    allocations, total_cost = northwest_corner_method(supply, demand, distances, cost_per_km_input)
-elif method == 'Least Cost':
-    allocations, total_cost = least_cost_parallel(supply, demand, distances, cost_per_km_input)
+        # Calculate total multiplication from the distribution table
+        total_multiplication = np.sum(allocations * np.array(distances))
 
-# Display results
-st.write('### Tabel Distribusi:')
-df_allocations = pd.DataFrame(allocations, index=[f'Gudang {i+1}' for i in range(num_gudang)] + (['Dummy'] if total_supply < sum(demand) else []), 
-                              columns=[f'Toko {i+1}' for i in range(num_toko)])
-st.write(df_allocations)
+        # Display total multiplication
+        st.subheader('Total Multiplication from Distribution Table:')
+        st.write(f'Total Multiplication: {total_multiplication}')
 
-# Calculate total multiplication from the distribution table
-total_multiplication = np.sum(df_allocations.values * distances)
+        # Ask for cost per kilometer
+        cost_per_km_input = st.number_input('Enter cost per kilometer (optional):', min_value=0)
 
-# Display total multiplication
-st.write('### Total Hasil Perkalian dari Tabel Distribusi:')
-st.write(f'Total Hasil Perkalian: {total_multiplication}')
+        # Calculate total cost if cost_per_km is provided
+        if cost_per_km_input:
+            total_cost = total_multiplication * cost_per_km_input
+            st.write('### Total Cost:')
+            st.write(f'Total Cost: {total_cost}')
 
-# Display total cost if cost_per_km is provided
-if cost_per_km_input:
-    st.write('### Biaya Total Pengiriman:')
-    if not np.isnan(total_cost):
-        st.write(f'Biaya Total Pengiriman: Rp {total_cost}')
-    else:
-        st.write('Biaya Total Pengiriman: NaN')
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
